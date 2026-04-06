@@ -2,6 +2,7 @@
  * Error types returned by the Ricqchet client.
  */
 export type RicqchetErrorType =
+  | "bad_request"
   | "unauthorized"
   | "forbidden"
   | "not_found"
@@ -58,6 +59,8 @@ export class RicqchetError extends Error {
 
   private static typeFromStatus(status: number): RicqchetErrorType {
     switch (status) {
+      case 400:
+        return "bad_request";
       case 401:
         return "unauthorized";
       case 403:

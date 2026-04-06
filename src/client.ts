@@ -1,4 +1,16 @@
 import { RicqchetError } from "./error";
+import { HttpClient } from "./http";
+import type {
+  TriggerEventParams,
+  TriggerEventResult,
+  BatchTriggerParams,
+  BatchTriggerResult,
+  Channel,
+  ChannelInfo,
+  ChannelEvent,
+  PresenceMember,
+  DisconnectResult,
+} from "./types";
 
 /**
  * Configuration options for the Ricqchet client.
@@ -69,7 +81,8 @@ export interface Message {
 }
 
 /**
- * Ricqchet HTTP client for publishing messages and managing deliveries.
+ * Ricqchet HTTP client for publishing messages, managing deliveries, and
+ * interacting with real-time channels.
  *
  * @example
  * ```typescript
@@ -85,15 +98,15 @@ export interface Message {
  * ```
  */
 export class RicqchetClient {
-  private baseUrl: string;
+  private http: HttpClient;
   private apiKey: string;
-  private timeout: number;
 
   constructor(options: RicqchetClientOptions) {
-    this.baseUrl = options.baseUrl.replace(/\/$/, "");
+    this.http = new HttpClient(options.baseUrl, options.timeout ?? 30000);
     this.apiKey = options.apiKey;
-    this.timeout = options.timeout ?? 30000;
   }
+
+  // ─── Publishing ──────────────────────────────────────────────────────────
 
   /**
    * Publishes a message to a destination URL.
@@ -102,15 +115,6 @@ export class RicqchetClient {
    * @param payload - The message payload (will be JSON-encoded if object)
    * @param options - Optional publish configuration
    * @returns The message ID
-   *
-   * @example
-   * ```typescript
-   * const { messageId } = await client.publish(
-   *   'https://api.example.com/webhook',
-   *   { event: 'user.created' },
-   *   { delay: '5m' }
-   * );
-   * ```
    */
   async publish(
     destination: string,
@@ -124,7 +128,7 @@ export class RicqchetClient {
     const response = await this.request("POST", "/v1/publish", headers, body);
 
     if (!response.ok) {
-      throw await this.parseError(response);
+      throw await this.http.parseError(response);
     }
 
     const data = await response.json();
@@ -138,14 +142,6 @@ export class RicqchetClient {
    * @param payload - The message payload
    * @param options - Optional publish configuration
    * @returns Array of message IDs
-   *
-   * @example
-   * ```typescript
-   * const { messageIds } = await client.publishFanOut(
-   *   ['https://a.example.com', 'https://b.example.com'],
-   *   { event: 'broadcast' }
-   * );
-   * ```
    */
   async publishFanOut(
     destinations: string[],
@@ -163,24 +159,20 @@ export class RicqchetClient {
     const response = await this.request("POST", "/v1/publish", headers, body);
 
     if (!response.ok) {
-      throw await this.parseError(response);
+      throw await this.http.parseError(response);
     }
 
     const data = await response.json();
     return { messageIds: data.message_ids };
   }
 
+  // ─── Messages ────────────────────────────────────────────────────────────
+
   /**
    * Gets the status and details of a message.
    *
    * @param messageId - The message ID to look up
    * @returns The message details
-   *
-   * @example
-   * ```typescript
-   * const message = await client.getMessage('550e8400-...');
-   * console.log(message.status); // 'delivered'
-   * ```
    */
   async getMessage(messageId: string): Promise<Message> {
     const response = await this.request(
@@ -195,7 +187,7 @@ export class RicqchetClient {
     }
 
     if (!response.ok) {
-      throw await this.parseError(response);
+      throw await this.http.parseError(response);
     }
 
     const data = await response.json();
@@ -208,11 +200,6 @@ export class RicqchetClient {
    * @param messageId - The message ID to cancel
    * @returns Confirmation of cancellation
    * @throws {RicqchetError} If the message has already been dispatched
-   *
-   * @example
-   * ```typescript
-   * const { cancelled } = await client.cancelMessage('550e8400-...');
-   * ```
    */
   async cancelMessage(messageId: string): Promise<{ cancelled: boolean }> {
     const response = await this.request(
@@ -235,7 +222,7 @@ export class RicqchetClient {
     }
 
     if (!response.ok) {
-      throw await this.parseError(response);
+      throw await this.http.parseError(response);
     }
 
     const data = await response.json();
@@ -246,22 +233,227 @@ export class RicqchetClient {
    * Retrieves the signing secret for webhook verification.
    *
    * @returns The binary signing secret
-   *
-   * @example
-   * ```typescript
-   * const signingSecret = await client.getSigningSecret();
-   * ```
    */
   async getSigningSecret(): Promise<Uint8Array> {
     const response = await this.request("GET", "/v1/signing-secret", {}, null);
 
     if (!response.ok) {
-      throw await this.parseError(response);
+      throw await this.http.parseError(response);
     }
 
     const data = await response.json();
     return Buffer.from(data.signing_secret, "base64");
   }
+
+  // ─── Channels ────────────────────────────────────────────────────────────
+
+  /**
+   * Triggers an event on one or more channels.
+   *
+   * @param params - Event parameters including channel(s), event name, and optional data
+   * @returns Event IDs and channel information
+   */
+  async triggerEvent(params: TriggerEventParams): Promise<TriggerEventResult> {
+    const body: Record<string, unknown> = { event: params.event };
+    if (params.channel != null) body.channel = params.channel;
+    if (params.channels != null) body.channels = params.channels;
+    if (params.data !== undefined) body.data = params.data;
+    if (params.socketId != null) body.socket_id = params.socketId;
+
+    const response = await this.request(
+      "POST",
+      "/v1/channels/events",
+      {},
+      JSON.stringify(body)
+    );
+
+    if (!response.ok) {
+      throw await this.http.parseError(response);
+    }
+
+    const data = await response.json();
+    const result: TriggerEventResult = { eventIds: data.event_ids };
+    if (data.channel) result.channel = data.channel;
+    if (data.channels) result.channels = data.channels;
+    return result;
+  }
+
+  /**
+   * Triggers multiple events in a single batch request.
+   *
+   * @param params - Batch of events (up to 100)
+   * @returns Results for each event in the batch
+   */
+  async triggerBatchEvents(
+    params: BatchTriggerParams
+  ): Promise<BatchTriggerResult> {
+    const body = {
+      batch: params.batch.map((item) => {
+        const mapped: Record<string, unknown> = {
+          channel: item.channel,
+          event: item.event,
+        };
+        if (item.data !== undefined) mapped.data = item.data;
+        if (item.socketId != null) mapped.socket_id = item.socketId;
+        return mapped;
+      }),
+    };
+
+    const response = await this.request(
+      "POST",
+      "/v1/channels/events/batch",
+      {},
+      JSON.stringify(body)
+    );
+
+    if (!response.ok) {
+      throw await this.http.parseError(response);
+    }
+
+    const data = await response.json();
+    return {
+      results: data.results.map((r: Record<string, unknown>) => ({
+        channel: r.channel as string,
+        event: r.event as string,
+        eventId: (r.event_id as string) ?? null,
+        status: r.status as "ok" | "error",
+        error: (r.error as string) ?? null,
+      })),
+    };
+  }
+
+  /**
+   * Lists all active channels.
+   *
+   * @returns Array of active channels with subscriber counts
+   */
+  async listChannels(): Promise<Channel[]> {
+    const response = await this.request("GET", "/v1/channels", {}, null);
+
+    if (!response.ok) {
+      throw await this.http.parseError(response);
+    }
+
+    const data = await response.json();
+    return data.channels.map((c: Record<string, unknown>) => ({
+      name: c.name as string,
+      subscriberCount: c.subscriber_count as number,
+      type: c.type as Channel["type"],
+    }));
+  }
+
+  /**
+   * Gets detailed information about a specific channel.
+   *
+   * @param channelName - The channel name
+   * @returns Channel info including subscriber count and presence members (if applicable)
+   */
+  async getChannel(channelName: string): Promise<ChannelInfo> {
+    const response = await this.request(
+      "GET",
+      `/v1/channels/${encodeURIComponent(channelName)}`,
+      {},
+      null
+    );
+
+    if (!response.ok) {
+      throw await this.http.parseError(response);
+    }
+
+    const data = await response.json();
+    return {
+      name: data.name,
+      type: data.type,
+      subscriberCount: data.subscriber_count,
+      occupied: data.occupied,
+      members: data.members ? data.members.map(this.mapPresenceMember) : null,
+    };
+  }
+
+  /**
+   * Gets event history for a channel.
+   *
+   * @param channelName - The channel name
+   * @param options - Optional filter parameters
+   * @returns Array of channel events
+   */
+  async getChannelEvents(
+    channelName: string,
+    options?: { sinceId?: string; limit?: number }
+  ): Promise<ChannelEvent[]> {
+    const params: string[] = [];
+    if (options?.sinceId)
+      params.push(`since_id=${encodeURIComponent(options.sinceId)}`);
+    if (options?.limit != null) params.push(`limit=${options.limit}`);
+    const qs = params.length > 0 ? `?${params.join("&")}` : "";
+
+    const response = await this.request(
+      "GET",
+      `/v1/channels/${encodeURIComponent(channelName)}/events${qs}`,
+      {},
+      null
+    );
+
+    if (!response.ok) {
+      throw await this.http.parseError(response);
+    }
+
+    const data = await response.json();
+    return data.events.map((e: Record<string, unknown>) => ({
+      id: e.id as string,
+      channel: e.channel as string,
+      event: e.event as string,
+      data: e.data,
+      sequence: e.sequence as number,
+      insertedAt: e.inserted_at as string,
+    }));
+  }
+
+  /**
+   * Lists members of a presence channel.
+   *
+   * @param channelName - The presence channel name (must start with "presence-")
+   * @returns Array of presence members
+   */
+  async getChannelMembers(channelName: string): Promise<PresenceMember[]> {
+    const response = await this.request(
+      "GET",
+      `/v1/channels/${encodeURIComponent(channelName)}/members`,
+      {},
+      null
+    );
+
+    if (!response.ok) {
+      throw await this.http.parseError(response);
+    }
+
+    const data = await response.json();
+    return data.members.map(this.mapPresenceMember);
+  }
+
+  /**
+   * Disconnects a user from all channels.
+   *
+   * @param userId - The user ID to disconnect
+   * @returns Disconnect confirmation
+   */
+  async disconnectUser(userId: string): Promise<DisconnectResult> {
+    const response = await this.request(
+      "DELETE",
+      `/v1/channels/users/${encodeURIComponent(userId)}/connections`,
+      {},
+      null
+    );
+
+    if (!response.ok) {
+      throw await this.http.parseError(response);
+    }
+
+    const data = await response.json();
+    return { status: data.status, userId: data.user_id };
+  }
+
+  // ─── Private Helpers ─────────────────────────────────────────────────────
 
   private async request(
     method: string,
@@ -269,24 +461,11 @@ export class RicqchetClient {
     headers: Record<string, string>,
     body: string | null
   ): Promise<Response> {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
-
-    try {
-      return await fetch(`${this.baseUrl}${path}`, {
-        method,
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-          "Content-Type": "application/json",
-          "User-Agent": "ricqchet-typescript/0.1.0",
-          ...headers,
-        },
-        body,
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timeoutId);
-    }
+    return this.http.request(method, path, {
+      headers,
+      body,
+      auth: { type: "bearer", token: this.apiKey },
+    });
   }
 
   private buildPublishHeaders(
@@ -324,19 +503,6 @@ export class RicqchetClient {
     return headers;
   }
 
-  private async parseError(response: Response): Promise<RicqchetError> {
-    try {
-      const data = await response.json();
-      return RicqchetError.fromResponse(response.status, data);
-    } catch {
-      return new RicqchetError(
-        "unknown_error",
-        `Request failed with status ${response.status}`,
-        response.status
-      );
-    }
-  }
-
   private mapMessage(data: Record<string, unknown>): Message {
     return {
       id: data.id as string,
@@ -351,6 +517,14 @@ export class RicqchetClient {
       completedAt: data.completed_at as string | null,
       lastError: data.last_error as string | null,
       lastResponseStatus: data.last_response_status as number | null,
+    };
+  }
+
+  private mapPresenceMember(m: Record<string, unknown>): PresenceMember {
+    return {
+      userId: m.user_id as string,
+      userInfo: (m.user_info as Record<string, unknown>) ?? null,
+      joinedAt: m.joined_at as string,
     };
   }
 }
