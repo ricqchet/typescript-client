@@ -1,10 +1,6 @@
 // ─── Channel Types ───────────────────────────────────────────────────────────
 
-export interface TriggerEventParams {
-  /** Single channel name */
-  channel?: string;
-  /** Multiple channel names (max 100, mutually exclusive with channel) */
-  channels?: string[];
+interface TriggerEventBase {
   /** Event name (1-255 chars) */
   event: string;
   /** Arbitrary JSON payload */
@@ -12,6 +8,20 @@ export interface TriggerEventParams {
   /** Socket ID to exclude sender from receiving the event */
   socketId?: string;
 }
+
+interface TriggerSingleChannel extends TriggerEventBase {
+  /** Single channel name */
+  channel: string;
+  channels?: never;
+}
+
+interface TriggerMultipleChannels extends TriggerEventBase {
+  channel?: never;
+  /** Multiple channel names (max 100) */
+  channels: string[];
+}
+
+export type TriggerEventParams = TriggerSingleChannel | TriggerMultipleChannels;
 
 export interface TriggerEventResult {
   eventIds: string[];

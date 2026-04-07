@@ -29,23 +29,35 @@ export class HttpClient {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
+    const headers = new Headers({
       "User-Agent": "ricqchet-typescript/0.1.0",
-      ...options.headers,
-    };
+    });
+
+    if (options.headers) {
+      for (const [name, value] of Object.entries(options.headers)) {
+        headers.set(name, value);
+      }
+    }
 
     if (options.auth?.type === "bearer") {
-      headers["Authorization"] = `Bearer ${options.auth.token}`;
+      headers.set("Authorization", `Bearer ${options.auth.token}`);
+    }
+
+    const body = options.body ?? null;
+
+    if (body !== null && !headers.has("Content-Type")) {
+      headers.set("Content-Type", "application/json");
     }
 
     try {
       return await fetch(`${this.baseUrl}${path}`, {
         method,
         headers,
-        body: options.body ?? null,
+        body,
         signal: controller.signal,
       });
+    } catch (error: unknown) {
+      throw RicqchetError.connectionError(error);
     } finally {
       clearTimeout(timeoutId);
     }
