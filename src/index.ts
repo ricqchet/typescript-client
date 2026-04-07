@@ -12,3 +12,15 @@ export type { VerificationResult, VerificationMetadata } from "./verification";
 
 export { RicqchetError } from "./error";
 export type { RicqchetErrorType } from "./error";
+
+export type {
+  TriggerEventParams,
+  TriggerEventResult,
+  BatchTriggerParams,
+  BatchTriggerResult,
+  Channel,
+  ChannelInfo,
+  ChannelEvent,
+  PresenceMember,
+  DisconnectResult,
+} from "./types";
