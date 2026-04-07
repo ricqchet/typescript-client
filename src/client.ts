@@ -115,6 +115,15 @@ export class RicqchetClient {
    * @param payload - The message payload (will be JSON-encoded if object)
    * @param options - Optional publish configuration
    * @returns The message ID
+   *
+   * @example
+   * ```typescript
+   * const { messageId } = await client.publish(
+   *   'https://api.example.com/webhook',
+   *   { event: 'user.created' },
+   *   { delay: '5m' }
+   * );
+   * ```
    */
   async publish(
     destination: string,
@@ -142,6 +151,14 @@ export class RicqchetClient {
    * @param payload - The message payload
    * @param options - Optional publish configuration
    * @returns Array of message IDs
+   *
+   * @example
+   * ```typescript
+   * const { messageIds } = await client.publishFanOut(
+   *   ['https://a.example.com', 'https://b.example.com'],
+   *   { event: 'broadcast' }
+   * );
+   * ```
    */
   async publishFanOut(
     destinations: string[],
@@ -173,6 +190,12 @@ export class RicqchetClient {
    *
    * @param messageId - The message ID to look up
    * @returns The message details
+   *
+   * @example
+   * ```typescript
+   * const message = await client.getMessage('550e8400-...');
+   * console.log(message.status); // 'delivered'
+   * ```
    */
   async getMessage(messageId: string): Promise<Message> {
     const response = await this.request(
@@ -200,6 +223,11 @@ export class RicqchetClient {
    * @param messageId - The message ID to cancel
    * @returns Confirmation of cancellation
    * @throws {RicqchetError} If the message has already been dispatched
+   *
+   * @example
+   * ```typescript
+   * const { cancelled } = await client.cancelMessage('550e8400-...');
+   * ```
    */
   async cancelMessage(messageId: string): Promise<{ cancelled: boolean }> {
     const response = await this.request(
@@ -233,6 +261,11 @@ export class RicqchetClient {
    * Retrieves the signing secret for webhook verification.
    *
    * @returns The binary signing secret
+   *
+   * @example
+   * ```typescript
+   * const signingSecret = await client.getSigningSecret();
+   * ```
    */
   async getSigningSecret(): Promise<Uint8Array> {
     const response = await this.request("GET", "/v1/signing-secret", {}, null);

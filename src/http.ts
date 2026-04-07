@@ -9,7 +9,7 @@ export interface RequestOptions {
 }
 
 /**
- * Shared HTTP client used by both RicqchetClient and RicqchetManagementClient.
+ * Shared HTTP client for the Ricqchet SDK.
  * @internal
  */
 export class HttpClient {
