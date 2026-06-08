@@ -150,6 +150,33 @@ describe("RicqchetClient", () => {
 
       expect(result.messageIds).toEqual(messageIds);
     });
+
+    it("rejects an empty destination list without making a request", async () => {
+      // No server handler is registered: msw errors on any request, so this
+      // also proves the SDK fails fast before hitting the network.
+      const client = new RicqchetClient({ baseUrl, apiKey });
+
+      await expect(
+        client.publishFanOut([], { event: "broadcast" })
+      ).rejects.toThrow(RicqchetError);
+    });
+
+    it("rejects more than 100 destinations without making a request", async () => {
+      const destinations = Array.from(
+        { length: 101 },
+        (_, i) => `https://svc-${i}.example.com/webhook`
+      );
+
+      const client = new RicqchetClient({ baseUrl, apiKey });
+
+      try {
+        await client.publishFanOut(destinations, { event: "broadcast" });
+        expect.fail("Should have thrown");
+      } catch (error) {
+        expect(error).toBeInstanceOf(RicqchetError);
+        expect((error as RicqchetError).type).toBe("validation_error");
+      }
+    });
   });
 
   describe("getMessage", () => {
@@ -249,6 +276,38 @@ describe("RicqchetClient", () => {
       const result = await client.getSigningSecret();
 
       expect(Buffer.from(result).toString()).toBe(secret.toString());
+    });
+  });
+
+  describe("health", () => {
+    it("returns the service status without sending credentials", async () => {
+      server.use(
+        http.get(`${baseUrl}/health`, ({ request }) => {
+          // /health is public: the SDK must not attach an Authorization header.
+          expect(request.headers.get("authorization")).toBeNull();
+          return HttpResponse.json({ status: "ok" });
+        })
+      );
+
+      const client = new RicqchetClient({ baseUrl, apiKey });
+      const result = await client.health();
+
+      expect(result.status).toBe("ok");
+    });
+
+    it("throws when the server reports unhealthy", async () => {
+      server.use(
+        http.get(`${baseUrl}/health`, () =>
+          HttpResponse.json(
+            { error: "server_error", message: "unhealthy" },
+            { status: 503 }
+          )
+        )
+      );
+
+      const client = new RicqchetClient({ baseUrl, apiKey });
+
+      await expect(client.health()).rejects.toThrow(RicqchetError);
     });
   });
 });
