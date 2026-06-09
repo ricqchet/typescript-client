@@ -4,6 +4,7 @@ export type {
   PublishOptions,
   PublishResult,
   FanOutResult,
+  HealthStatus,
   Message,
 } from "./client";
 
@@ -12,6 +13,9 @@ export type { VerificationResult, VerificationMetadata } from "./verification";
 
 export { RicqchetError } from "./error";
 export type { RicqchetErrorType } from "./error";
+
+export { validateChannelName, channelType } from "./channels";
+export type { ChannelType, ChannelNameValidation } from "./channels";
 
 export type {
   TriggerEventParams,

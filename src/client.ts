@@ -13,6 +13,12 @@ import type {
 } from "./types";
 
 /**
+ * Maximum number of destinations allowed in a single fan-out request.
+ * Mirrors the server-side limit so the client can fail fast.
+ */
+const MAX_FAN_OUT_DESTINATIONS = 100;
+
+/**
  * Configuration options for the Ricqchet client.
  */
 export interface RicqchetClientOptions {
@@ -63,6 +69,14 @@ export interface FanOutResult {
 }
 
 /**
+ * Service health status returned by {@link RicqchetClient.health}.
+ */
+export interface HealthStatus {
+  /** Service status — `"ok"` when the server is healthy */
+  status: string;
+}
+
+/**
  * Message status and details.
  */
 export interface Message {
@@ -104,6 +118,38 @@ export class RicqchetClient {
   constructor(options: RicqchetClientOptions) {
     this.http = new HttpClient(options.baseUrl, options.timeout ?? 30000);
     this.apiKey = options.apiKey;
+  }
+
+  // ─── Service ─────────────────────────────────────────────────────────────
+
+  /**
+   * Checks whether the Ricqchet server is healthy.
+   *
+   * This endpoint is public and requires no authentication, so it works even
+   * before an API key is provisioned — useful for readiness probes against a
+   * self-hosted instance.
+   *
+   * @returns The server health status (`{ status: "ok" }` when healthy)
+   *
+   * @example
+   * ```typescript
+   * const { status } = await client.health();
+   * if (status !== "ok") throw new Error("Ricqchet is unhealthy");
+   * ```
+   */
+  async health(): Promise<HealthStatus> {
+    // No `auth` is passed: /health is the one unauthenticated relay route.
+    const response = await this.http.request("GET", "/health", {
+      headers: {},
+      body: null,
+    });
+
+    if (!response.ok) {
+      throw await this.http.parseError(response);
+    }
+
+    const data = await response.json();
+    return { status: data.status };
   }
 
   // ─── Publishing ──────────────────────────────────────────────────────────
@@ -165,6 +211,20 @@ export class RicqchetClient {
     payload: unknown,
     options?: PublishOptions
   ): Promise<FanOutResult> {
+    if (destinations.length === 0) {
+      throw new RicqchetError(
+        "validation_error",
+        "publishFanOut requires at least one destination"
+      );
+    }
+
+    if (destinations.length > MAX_FAN_OUT_DESTINATIONS) {
+      throw new RicqchetError(
+        "validation_error",
+        `publishFanOut supports at most ${MAX_FAN_OUT_DESTINATIONS} destinations (received ${destinations.length})`
+      );
+    }
+
     const headers: Record<string, string> = {
       "ricqchet-fan-out": destinations.join(", "),
       ...this.buildCommonHeaders(options),
